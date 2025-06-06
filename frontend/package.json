@@ -1,13 +1,16 @@
 {
-  "name": "frontend",
+  "name": "youtube-analytics-frontend",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
+  "description": "YouTube Analytics Pro - Advanced channel data extraction and analysis frontend",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "vercel-build": "vite build",
+    "start": "vite preview --port $PORT"
   },
   "dependencies": {
     "react": "^19.1.0",
@@ -26,5 +29,12 @@
     "eslint-plugin-react-refresh": "^0.4.19",
     "globals": "^16.0.0",
     "vite": "^6.3.5"
-  }
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "keywords": ["react", "vite", "youtube", "analytics", "frontend", "vercel"],
+  "author": "",
+  "license": "MIT"
 }

@@ -5,11 +5,18 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>YouTube Analytics Pro</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
         theme: {
           extend: {
+            fontFamily: {
+              'sans': ['Inter', 'system-ui', 'sans-serif'],
+              'mono': ['JetBrains Mono', 'monospace'],
+            },
             animation: {
               'spin-slow': 'spin 3s linear infinite',
               'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
@@ -19,6 +26,17 @@
               'slideInLeft': 'slideInLeft 0.8s ease-out',
               'slideInRight': 'slideInRight 0.5s ease-out',
               'fadeIn': 'fadeIn 0.5s ease-out',
+              'float': 'float 6s ease-in-out infinite',
+              'glow': 'glow 2s ease-in-out infinite alternate',
+              'shimmer': 'shimmer 2s linear infinite',
+            },
+            backdropBlur: {
+              'xs': '2px',
+            },
+            boxShadow: {
+              'glow': '0 0 20px rgba(99, 102, 241, 0.5)',
+              'glow-lg': '0 0 40px rgba(99, 102, 241, 0.6)',
+              'inner-glow': 'inset 0 0 20px rgba(255, 255, 255, 0.1)',
             }
           }
         }
@@ -65,14 +83,38 @@
           transform: translateX(0);
         }
       }
-      @keyframes fadeIn {
-        from {
-          opacity: 0;
-        }
-        to {
-          opacity: 1;
-        }
-      }
+             @keyframes fadeIn {
+         from {
+           opacity: 0;
+         }
+         to {
+           opacity: 1;
+         }
+       }
+       @keyframes float {
+         0%, 100% {
+           transform: translateY(0px);
+         }
+         50% {
+           transform: translateY(-20px);
+         }
+       }
+       @keyframes glow {
+         from {
+           box-shadow: 0 0 20px rgba(99, 102, 241, 0.5);
+         }
+         to {
+           box-shadow: 0 0 40px rgba(99, 102, 241, 0.8);
+         }
+       }
+       @keyframes shimmer {
+         0% {
+           background-position: -200% 0;
+         }
+         100% {
+           background-position: 200% 0;
+         }
+       }
     </style>
   </head>
   <body>
