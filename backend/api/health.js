@@ -19,18 +19,8 @@ module.exports = (req, res) => {
   }
 
   res.json({ 
-    message: 'YouTube Analytics Pro API',
-    version: '1.0.0',
-    status: 'OK',
-    apiKeyConfigured: !!YOUTUBE_API_KEY,
-    endpoints: {
-      health: '/api/health',
-      channelSearch: '/api/channels/search',
-      channelData: '/api/channel'
-    },
-    documentation: {
-      search: 'GET /api/channels/search?q=channelname&strategy=smart',
-      analyze: 'POST /api/channel with { channelId, options }'
-    }
+    status: 'OK', 
+    message: 'YouTube Channel Fetcher API is running',
+    apiKeyConfigured: !!YOUTUBE_API_KEY
   });
 }; 
