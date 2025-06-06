@@ -4,7 +4,6 @@ const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors());
@@ -159,7 +158,7 @@ const searchChannelsByStrategy = async (query, strategy = 'general') => {
 };
 
 // Route to search for channels
-app.get('/api/channels/search', async (req, res) => {
+app.get('/channels/search', async (req, res) => {
   try {
     const { q, strategy = 'smart' } = req.query;
     
@@ -201,33 +200,33 @@ app.get('/api/channels/search', async (req, res) => {
             subscriberCount: channel.statistics.subscriberCount,
             videoCount: channel.statistics.videoCount,
             viewCount: channel.statistics.viewCount,
-            publishedAt: channel.snippet.publishedAt,
-            relevanceScore: 1000,
-            matchType: 'direct_url'
-          }]
+            relevanceScore: 100,
+            matchType: 'Direct URL/ID'
+          }],
+          searchTips: {
+            isDirectMatch: true,
+            originalQuery: q
+          }
         });
       }
     }
 
-    // Multi-strategy search
+    // Multi-strategy search approach
     let allChannels = [];
     
     if (strategy === 'smart') {
-      // Try multiple strategies in order of precision
-      const exactChannels = await searchChannelsByStrategy(q, 'exact');
-      const handleChannels = await searchChannelsByStrategy(q, 'handle');
-      const generalChannels = await searchChannelsByStrategy(q, 'general');
+      // Try multiple strategies in order of preference
+      const strategies = ['exact', 'handle', 'general'];
       
-      allChannels = [...exactChannels, ...handleChannels, ...generalChannels];
+      for (const strat of strategies) {
+        const channels = await searchChannelsByStrategy(q, strat);
+        allChannels.push(...channels);
+        
+        // If we get good results early, we can break
+        if (channels.length > 0) break;
+      }
     } else {
       allChannels = await searchChannelsByStrategy(q, strategy);
-    }
-
-    if (allChannels.length === 0) {
-      return res.json({ 
-        channels: [],
-        message: `No channels found for "${q}". Try using the exact channel handle (e.g., @username) or channel URL.`
-      });
     }
 
     // Remove duplicates and calculate relevance scores
@@ -237,7 +236,13 @@ app.get('/api/channels/search', async (req, res) => {
     for (const channel of allChannels) {
       if (!seenIds.has(channel.id)) {
         seenIds.add(channel.id);
-        const relevanceScore = calculateRelevanceScore(channel.snippet, q);
+        
+        const relevanceScore = calculateRelevanceScore({
+          title: channel.snippet.title,
+          customUrl: channel.snippet.customUrl,
+          description: channel.snippet.description,
+          subscriberCount: channel.statistics?.subscriberCount
+        }, q);
         
         uniqueChannels.push({
           id: channel.id,
@@ -245,44 +250,57 @@ app.get('/api/channels/search', async (req, res) => {
           description: channel.snippet.description,
           customUrl: channel.snippet.customUrl,
           thumbnails: channel.snippet.thumbnails,
-          subscriberCount: channel.statistics.subscriberCount,
-          videoCount: channel.statistics.videoCount,
-          viewCount: channel.statistics.viewCount,
-          publishedAt: channel.snippet.publishedAt,
-          relevanceScore: relevanceScore,
-          matchType: 'search'
+          subscriberCount: channel.statistics?.subscriberCount || '0',
+          videoCount: channel.statistics?.videoCount || '0',
+          viewCount: channel.statistics?.viewCount || '0',
+          relevanceScore,
+          matchType: relevanceScore >= 80 ? 'Best Match' : relevanceScore >= 40 ? 'Good Match' : 'Possible Match'
         });
       }
     }
 
-    // Sort by relevance score (highest first)
+    // Sort by relevance score
     uniqueChannels.sort((a, b) => b.relevanceScore - a.relevanceScore);
-    
-    // Return top 8 most relevant channels
-    const topChannels = uniqueChannels.slice(0, 8);
-    
-    console.log(`Found ${topChannels.length} unique channels, top match: "${topChannels[0]?.title}" (score: ${topChannels[0]?.relevanceScore})`);
 
-    res.json({ 
+    // Limit to top 10 results
+    const topChannels = uniqueChannels.slice(0, 10);
+
+    const searchTips = {
+      isDirectMatch: false,
+      originalQuery: q,
+      totalFound: topChannels.length,
+      strategies: strategy === 'smart' ? ['exact', 'handle', 'general'] : [strategy],
+      suggestions: topChannels.length === 0 ? [
+        'Try using the exact channel name',
+        'Use @ symbol for handles (e.g., @channelname)',
+        'Try a partial match or broader terms',
+        'Check if the channel URL/ID is correct'
+      ] : []
+    };
+
+    res.json({
       channels: topChannels,
-      totalFound: uniqueChannels.length,
-      searchTips: topChannels.length > 3 ? [
-        "Use @ symbol for handles (e.g., @username)",
-        "Try the exact channel name in quotes",
-        "Use the full YouTube channel URL for precise results"
-      ] : null
+      searchTips
     });
 
   } catch (error) {
-    console.error('Channel search error:', error.response?.data || error.message);
-    res.status(500).json({ 
-      error: error.response?.data?.error?.message || 'Failed to search channels' 
-    });
+    console.error('Error searching channels:', error.response?.data || error.message);
+    
+    if (error.response?.status === 403) {
+      res.status(403).json({ 
+        error: 'YouTube API quota exceeded or invalid API key' 
+      });
+    } else {
+      res.status(500).json({ 
+        error: 'Failed to search channels',
+        details: error.response?.data?.error?.message || error.message
+      });
+    }
   }
 });
 
-// Route to get channel details with selected options
-app.post('/api/channel', async (req, res) => {
+// Route to get channel data with selected options
+app.post('/channel', async (req, res) => {
   try {
     const { channelId, options } = req.body;
     
@@ -292,176 +310,141 @@ app.post('/api/channel', async (req, res) => {
       });
     }
 
-    if (!channelId || !options || options.length === 0) {
-      return res.status(400).json({ error: 'Channel ID and options are required' });
+    if (!channelId) {
+      return res.status(400).json({ error: 'Channel ID is required' });
     }
 
-    // Validate that channelId is a proper YouTube channel ID
-    if (!channelId.match(/^UC[a-zA-Z0-9_-]{22}$/)) {
-      return res.status(400).json({ error: 'Invalid channel ID format' });
+    if (!options || options.length === 0) {
+      return res.status(400).json({ error: 'At least one data option must be selected' });
     }
 
-    const channelData = {};
+    console.log(`Fetching channel data for ID: ${channelId} with options:`, options);
 
     // Determine which parts to fetch based on selected options
     const parts = [];
-    if (options.includes('basicInfo') || options.includes('thumbnails')) {
-      parts.push('snippet');
+    if (options.includes('basicInfo') || options.includes('thumbnails')) parts.push('snippet');
+    if (options.includes('statistics')) parts.push('statistics');
+    if (options.includes('branding')) parts.push('brandingSettings');
+    if (options.includes('contentDetails')) parts.push('contentDetails');
+    if (options.includes('topicDetails')) parts.push('topicDetails');
+    if (options.includes('localizations')) parts.push('localizations');
+    
+    // Remove duplicates
+    const uniqueParts = [...new Set(parts)];
+    
+    if (uniqueParts.length === 0) {
+      uniqueParts.push('snippet'); // Always include snippet as fallback
     }
+
+    console.log(`Fetching parts: ${uniqueParts.join(', ')}`);
+
+    // Get main channel data
+    const channelResponse = await axios.get(`${YOUTUBE_API_BASE_URL}/channels`, {
+      params: {
+        key: YOUTUBE_API_KEY,
+        id: channelId,
+        part: uniqueParts.join(',')
+      }
+    });
+
+    if (!channelResponse.data.items || channelResponse.data.items.length === 0) {
+      return res.status(404).json({ error: 'Channel not found' });
+    }
+
+    const channel = channelResponse.data.items[0];
+    const channelData = {};
+
+    // Process basic info
+    if (options.includes('basicInfo')) {
+      channelData.basicInfo = {
+        title: channel.snippet?.title,
+        description: channel.snippet?.description,
+        customUrl: channel.snippet?.customUrl,
+        publishedAt: channel.snippet?.publishedAt,
+        country: channel.snippet?.country,
+        defaultLanguage: channel.snippet?.defaultLanguage
+      };
+    }
+
+    // Process statistics
     if (options.includes('statistics')) {
-      parts.push('statistics');
+      channelData.statistics = {
+        subscriberCount: channel.statistics?.subscriberCount,
+        videoCount: channel.statistics?.videoCount,
+        viewCount: channel.statistics?.viewCount,
+        hiddenSubscriberCount: channel.statistics?.hiddenSubscriberCount
+      };
     }
+
+    // Process thumbnails
+    if (options.includes('thumbnails')) {
+      channelData.thumbnails = channel.snippet?.thumbnails;
+    }
+
+    // Process branding
     if (options.includes('branding')) {
-      parts.push('brandingSettings');
+      channelData.branding = {
+        image: channel.brandingSettings?.image,
+        channel: channel.brandingSettings?.channel,
+        keywords: channel.brandingSettings?.channel?.keywords,
+        unsubscribedTrailer: channel.brandingSettings?.channel?.unsubscribedTrailer,
+        featuredChannelsTitle: channel.brandingSettings?.channel?.featuredChannelsTitle,
+        featuredChannelsUrls: channel.brandingSettings?.channel?.featuredChannelsUrls
+      };
     }
+
+    // Process content details
     if (options.includes('contentDetails')) {
-      parts.push('contentDetails');
+      channelData.contentDetails = channel.contentDetails;
     }
+
+    // Process topic details
     if (options.includes('topicDetails')) {
-      parts.push('topicDetails');
+      channelData.topicDetails = channel.topicDetails;
     }
+
+    // Process localizations
     if (options.includes('localizations')) {
-      parts.push('localizations');
-    }
-
-    // Get basic channel details if any core options are selected
-    if (parts.length > 0) {
-      const channelResponse = await axios.get(`${YOUTUBE_API_BASE_URL}/channels`, {
-        params: {
-          key: YOUTUBE_API_KEY,
-          id: channelId,
-          part: parts.join(',')
-        }
-      });
-
-      if (!channelResponse.data.items || channelResponse.data.items.length === 0) {
-        return res.status(404).json({ error: 'Channel not found' });
-      }
-
-      const channel = channelResponse.data.items[0];
-
-      // Basic Info
-      if (options.includes('basicInfo')) {
-        channelData.basicInfo = {
-          id: channel.id,
-          title: channel.snippet?.title,
-          description: channel.snippet?.description,
-          customUrl: channel.snippet?.customUrl,
-          publishedAt: channel.snippet?.publishedAt,
-          country: channel.snippet?.country,
-          defaultLanguage: channel.snippet?.defaultLanguage
-        };
-      }
-
-      // Thumbnails
-      if (options.includes('thumbnails')) {
-        channelData.thumbnails = channel.snippet?.thumbnails;
-      }
-
-      // Statistics
-      if (options.includes('statistics')) {
-        channelData.statistics = {
-          viewCount: channel.statistics?.viewCount,
-          subscriberCount: channel.statistics?.subscriberCount,
-          videoCount: channel.statistics?.videoCount,
-          hiddenSubscriberCount: channel.statistics?.hiddenSubscriberCount
-        };
-      }
-
-      // Branding
-      if (options.includes('branding')) {
-        channelData.branding = {
-          bannerImageUrl: channel.brandingSettings?.image?.bannerExternalUrl,
-          bannerMobileImageUrl: channel.brandingSettings?.image?.bannerMobileExtraHdImageUrl,
-          keywords: channel.brandingSettings?.channel?.keywords,
-          unsubscribedTrailer: channel.brandingSettings?.channel?.unsubscribedTrailer,
-          defaultTab: channel.brandingSettings?.channel?.defaultTab
-        };
-      }
-
-      // Content Details
-      if (options.includes('contentDetails')) {
-        channelData.contentDetails = {
-          uploadsPlaylistId: channel.contentDetails?.relatedPlaylists?.uploads,
-          likesPlaylistId: channel.contentDetails?.relatedPlaylists?.likes,
-          favoritesPlaylistId: channel.contentDetails?.relatedPlaylists?.favorites
-        };
-      }
-
-      // Topic Details
-      if (options.includes('topicDetails')) {
-        channelData.topicDetails = {
-          topicIds: channel.topicDetails?.topicIds,
-          topicCategories: channel.topicDetails?.topicCategories
-        };
-      }
-
-      // Localizations
-      if (options.includes('localizations')) {
-        channelData.localizations = channel.localizations;
-      }
+      channelData.localizations = channel.localizations;
     }
 
     // Get recent videos if requested
     if (options.includes('recentVideos')) {
       try {
-        const videosResponse = await axios.get(`${YOUTUBE_API_BASE_URL}/search`, {
-          params: {
-            key: YOUTUBE_API_KEY,
-            channelId: channelId,
-            part: 'snippet',
-            order: 'date',
-            maxResults: 10,
-            type: 'video'
-          }
-        });
-
-        // Get detailed information for recent videos
-        const videoIds = videosResponse.data.items.map(video => video.id.videoId);
-        console.log(`Found ${videoIds.length} recent video IDs`);
-        
-        if (videoIds.length > 0) {
-          const detailsResponse = await axios.get(`${YOUTUBE_API_BASE_URL}/videos`, {
+        const uploadsPlaylistId = channel.contentDetails?.relatedPlaylists?.uploads;
+        if (uploadsPlaylistId) {
+          const recentVideosResponse = await axios.get(`${YOUTUBE_API_BASE_URL}/playlistItems`, {
             params: {
               key: YOUTUBE_API_KEY,
-              id: videoIds.join(','),
-              part: 'snippet,statistics,contentDetails,status'
+              playlistId: uploadsPlaylistId,
+              part: 'snippet,contentDetails',
+              maxResults: 10
             }
           });
 
-          console.log(`Retrieved details for ${detailsResponse.data.items.length} recent videos`);
+          const videoIds = recentVideosResponse.data.items.map(item => item.contentDetails.videoId);
+          
+          if (videoIds.length > 0) {
+            const videoDetailsResponse = await axios.get(`${YOUTUBE_API_BASE_URL}/videos`, {
+              params: {
+                key: YOUTUBE_API_KEY,
+                id: videoIds.join(','),
+                part: 'snippet,statistics,contentDetails'
+              }
+            });
 
-          channelData.recentVideos = detailsResponse.data.items.map(video => {
-            // Debug first recent video
-            if (video === detailsResponse.data.items[0]) {
-              console.log('Sample recent video data:', {
-                id: video.id,
-                title: video.snippet?.title,
-                hasDescription: !!video.snippet?.description,
-                descriptionLength: video.snippet?.description?.length || 0,
-                tagCount: video.snippet?.tags?.length || 0
-              });
-            }
-            
-            return {
-            id: video.id,
-            title: video.snippet?.title,
-            description: video.snippet?.description,
-            publishedAt: video.snippet?.publishedAt,
-            thumbnails: video.snippet?.thumbnails,
-            channelTitle: video.snippet?.channelTitle,
-            tags: video.snippet?.tags || [],
-            categoryId: video.snippet?.categoryId,
-            viewCount: video.statistics?.viewCount || '0',
-            likeCount: video.statistics?.likeCount || '0',
-            commentCount: video.statistics?.commentCount || '0',
-            duration: parseDuration(video.contentDetails?.duration),
-            definition: video.contentDetails?.definition,
-            caption: video.contentDetails?.caption
-            };
-          });
-        } else {
-          channelData.recentVideos = [];
+            channelData.recentVideos = videoDetailsResponse.data.items.map(video => ({
+              id: video.id,
+              title: video.snippet?.title,
+              description: video.snippet?.description,
+              publishedAt: video.snippet?.publishedAt,
+              thumbnails: video.snippet?.thumbnails,
+              duration: parseDuration(video.contentDetails?.duration),
+              viewCount: video.statistics?.viewCount,
+              likeCount: video.statistics?.likeCount,
+              commentCount: video.statistics?.commentCount
+            }));
+          }
         }
       } catch (error) {
         console.error('Error fetching recent videos:', error.message);
@@ -472,76 +455,47 @@ app.post('/api/channel', async (req, res) => {
     // Get all videos with detailed information if requested
     if (options.includes('allVideos')) {
       try {
-        console.log('Starting to fetch all videos for channel:', channelId);
+        const uploadsPlaylistId = channel.contentDetails?.relatedPlaylists?.uploads;
+        console.log(`Uploads playlist ID: ${uploadsPlaylistId}`);
         
-        // First, get the uploads playlist ID
-        let uploadsPlaylistId = null;
-        
-        if (channelData.contentDetails?.uploadsPlaylistId) {
-          uploadsPlaylistId = channelData.contentDetails.uploadsPlaylistId;
-          console.log('Found uploads playlist ID from existing data:', uploadsPlaylistId);
-        } else {
-          // Get the uploads playlist ID from channel details
-          console.log('Fetching uploads playlist ID from channel details...');
-          const channelForUploads = await axios.get(`${YOUTUBE_API_BASE_URL}/channels`, {
-            params: {
-              key: YOUTUBE_API_KEY,
-              id: channelId,
-              part: 'contentDetails'
-            }
-          });
-          uploadsPlaylistId = channelForUploads.data.items[0]?.contentDetails?.relatedPlaylists?.uploads;
-          console.log('Retrieved uploads playlist ID:', uploadsPlaylistId);
-        }
-
         if (uploadsPlaylistId) {
-          const allVideoIds = [];
+          // Get all video IDs from the uploads playlist
+          let allVideoIds = [];
           let nextPageToken = '';
           let pageCount = 0;
+          const maxPages = 10; // Limit to prevent infinite loops (10 pages = ~500 videos)
+
+          console.log('Starting to fetch all video IDs...');
           
-          console.log('Fetching video IDs from uploads playlist...');
-          
-          // Get all video IDs from the uploads playlist (pagination)
           do {
-            pageCount++;
-            console.log(`Fetching page ${pageCount}, current total videos: ${allVideoIds.length}`);
-            
-            const playlistParams = {
-              key: YOUTUBE_API_KEY,
-              playlistId: uploadsPlaylistId,
-              part: 'contentDetails',
-              maxResults: 50
-            };
-            
-            if (nextPageToken) {
-              playlistParams.pageToken = nextPageToken;
-            }
-            
-            const playlistResponse = await axios.get(`${YOUTUBE_API_BASE_URL}/playlistItems`, {
-              params: playlistParams
-            });
+            try {
+              const playlistResponse = await axios.get(`${YOUTUBE_API_BASE_URL}/playlistItems`, {
+                params: {
+                  key: YOUTUBE_API_KEY,
+                  playlistId: uploadsPlaylistId,
+                  part: 'contentDetails',
+                  maxResults: 50,
+                  pageToken: nextPageToken
+                }
+              });
 
-            console.log(`Page ${pageCount} returned ${playlistResponse.data.items.length} videos`);
-            
-            const videoIds = playlistResponse.data.items.map(item => item.contentDetails.videoId);
-            allVideoIds.push(...videoIds);
-            nextPageToken = playlistResponse.data.nextPageToken;
-            
-            console.log(`Next page token: ${nextPageToken ? 'Present' : 'None'}`);
-
-            // Limit to reasonable number of videos to avoid timeout
-            if (allVideoIds.length >= 500) {
-              console.log(`Limiting to first 500 videos out of potentially more`);
+              console.log(`Page ${pageCount + 1}: Found ${playlistResponse.data.items.length} videos`);
+              
+              const pageVideoIds = playlistResponse.data.items.map(item => item.contentDetails.videoId);
+              allVideoIds.push(...pageVideoIds);
+              
+              nextPageToken = playlistResponse.data.nextPageToken;
+              pageCount++;
+              
+              console.log(`Total videos collected so far: ${allVideoIds.length}`);
+              
+            } catch (pageError) {
+              console.error(`Error fetching page ${pageCount + 1}:`, pageError.message);
               break;
             }
-            
-            // Add delay between requests to respect rate limits
-            if (nextPageToken) {
-              await new Promise(resolve => setTimeout(resolve, 100));
-            }
-          } while (nextPageToken);
-          
-          console.log(`Total video IDs collected: ${allVideoIds.length}`);
+          } while (nextPageToken && pageCount < maxPages);
+
+          console.log(`Finished collecting video IDs. Total: ${allVideoIds.length} videos`);
 
           // Get detailed video information in batches of 50 (API limit)
           const allVideosData = [];
@@ -719,7 +673,7 @@ app.post('/api/channel', async (req, res) => {
 });
 
 // Health check route
-app.get('/api/health', (req, res) => {
+app.get('/health', (req, res) => {
   res.json({ 
     status: 'OK', 
     message: 'YouTube Channel Fetcher API is running',
@@ -732,19 +686,12 @@ app.get('/', (req, res) => {
   res.json({ 
     message: 'YouTube Channel Fetcher API',
     endpoints: {
-      health: '/api/health',
-      channel: '/api/channel/:channelInput'
+      health: '/health',
+      channelSearch: '/channels/search',
+      channelData: '/channel'
     }
   });
 });
-
-// For local development
-if (process.env.NODE_ENV !== 'production') {
-  app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
-    console.log(`YouTube API Key configured: ${!!YOUTUBE_API_KEY}`);
-  });
-}
 
 // Export the Express app for Vercel
 module.exports = app; 
