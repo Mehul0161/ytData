@@ -21,7 +21,11 @@ import { AiOutlineLoading3Quarters } from 'react-icons/ai'
 import { BiSelectMultiple } from 'react-icons/bi'
 import { MdClear } from 'react-icons/md'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (
+  import.meta.env.MODE === 'production' 
+    ? '/api' // Use relative path in production
+    : 'http://localhost:5000/api' // Use localhost only in development
+)
 
 // Available data options that users can select
 const DATA_OPTIONS = [
